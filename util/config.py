@@ -6,6 +6,7 @@ Written by Li Jiang
 import argparse
 import yaml
 import os
+import glob
 
 def get_parser():
     parser = argparse.ArgumentParser(description='Point Cloud Segmentation')
@@ -52,4 +53,14 @@ def get_parser_notebook(cfg_file=None, pretrain_path=None):
         for k, v in config[key].items():
             setattr(cfg, k, v)
 
-    setattr(cfg, 'exp_path', os.path.join('exp', cfg.dataset, cfg.model_name, cfg.config.split('/')[-1][:-5]))
+    # Experiment directory naming
+    base_exp_path = os.path.join('exp', cfg.dataset, cfg.model_name, cfg.config.split('/')[-1][:-5])
+    exp_dirs = sorted(glob.glob(os.path.join(base_exp_path, '*')))
+    if len(exp_dirs) > 0:
+        latest_exp_dir = exp_dirs[-1]
+        latest_exp_dir_num = int(latest_exp_dir.split('/')[-1][-3:])
+    else:
+        latest_exp_dir_num = 0
+    exp_path = os.path.join(base_exp_path, f'{latest_exp_dir_num+1:03d}')
+
+    setattr(cfg, 'exp_path', exp_path)

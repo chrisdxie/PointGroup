@@ -5,7 +5,7 @@ GENERAL:
   dataset_dir: data/TOD.py
 
 DATA:
-  data_root: /data/tabletop_dataset_v5/
+  data_root: /raid/chrisxie/tabletop_dataset_v5/
   dataset: TOD
 
   classes: 3
@@ -13,9 +13,10 @@ DATA:
 
   input_channel: 3
   scale: 250   # voxel_size = 1 / scale, scale 50(2cm)
-  batch_size: 2
-  full_scale: [640, 2560]  # Original values were [128, 512]. Multiplied by 5
-  max_npoint: 250000
+  batch_size: 4
+  far_plane: 3.  # Anything above this depth is not considered
+  full_scale: [512, 2048]  # Original values were [128, 512]. Multiplied by 4
+  max_npoint: 350000  # Each image has a point cloud of 307200 = 480*640
   mode: 4 # 4=mean
 
 STRUCTURE:
@@ -29,7 +30,7 @@ STRUCTURE:
 TRAIN:
   max_epochs: 10
   max_iters: 150000
-  train_workers: 2 # data loader workers
+  train_workers: 16 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.001
   step_epoch: 50 # not used
@@ -38,6 +39,8 @@ TRAIN:
   weight_decay: 0.0001
   save_freq: 1  # also eval_freq
   loss_weight: [1.0, 1.0, 1.0, 1.0] # semantic_loss, offset_norm_loss, offset_dir_loss, score_loss
+
+  i_log: 50  # Log to tensorboard every X iterations
 
   fg_thresh: 0.75
   bg_thresh: 0.25

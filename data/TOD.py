@@ -271,6 +271,14 @@ class Dataset:
         segmentation_labels = segmentation_labels.reshape(-1)
         instance_labels = instance_labels.reshape(-1)
 
+        # Get rid of depth holes (0's), and stuff that is just too far away
+        holes_mask = np.logical_or(depth_img.reshape(-1) == 0, depth_img.reshape(-1) > cfg.far_plane)
+        rgb = rgb[~holes_mask]
+        xyz = xyz[~holes_mask]
+        xyz_augmented = xyz_augmented[~holes_mask]
+        segmentation_labels = segmentation_labels[~holes_mask]
+        instance_labels = instance_labels[~holes_mask]
+
         return xyz, xyz_augmented, rgb, segmentation_labels, instance_labels
 
 
