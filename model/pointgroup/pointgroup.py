@@ -127,7 +127,7 @@ class PointGroup(nn.Module):
         self.score_fullscale = cfg.score_fullscale
         self.mode = cfg.score_mode
 
-        self.prepare_epochs = cfg.prepare_epochs
+        self.prepare_iters = cfg.prepare_iters
 
         self.pretrain_path = cfg.pretrain_path
         self.pretrain_module = cfg.pretrain_module
@@ -252,7 +252,7 @@ class PointGroup(nn.Module):
         return voxelization_feats, inp_map
 
 
-    def forward(self, input, input_map, coords, batch_idxs, batch_offsets, epoch):
+    def forward(self, input, input_map, coords, batch_idxs, batch_offsets, iter_num):
         '''
         :param input_map: (N), int, cuda
         :param coords: (N, 3), float, cuda
@@ -278,9 +278,9 @@ class PointGroup(nn.Module):
 
         ret['pt_offsets'] = pt_offsets
 
-        if(epoch > self.prepare_epochs):
+        if(iter_num > self.prepare_iters):
             #### get prooposal clusters
-            object_idxs = torch.nonzero(semantic_preds > 1).view(-1)
+            object_idxs = torch.nonzero(semantic_preds > 1).view(-1)  # OBJECTS label is 2
 
             batch_idxs_ = batch_idxs[object_idxs]
             batch_offsets_ = utils.get_batch_offsets(batch_idxs_, input.batch_size)
@@ -295,16 +295,18 @@ class PointGroup(nn.Module):
             # proposals_idx_shift: (sumNPoint, 2), int, dim 0 for cluster_id, dim 1 for corresponding point idxs in N
             # proposals_offset_shift: (nProposal + 1), int
 
-            idx, start_len = pointgroup_ops.ballquery_batch_p(coords_, batch_idxs_, batch_offsets_, self.cluster_radius, self.cluster_meanActive)
-            proposals_idx, proposals_offset = pointgroup_ops.bfs_cluster(semantic_preds_cpu, idx.cpu(), start_len.cpu(), self.cluster_npoint_thre)
-            proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
+            # idx, start_len = pointgroup_ops.ballquery_batch_p(coords_, batch_idxs_, batch_offsets_, self.cluster_radius, self.cluster_meanActive)
+            # proposals_idx, proposals_offset = pointgroup_ops.bfs_cluster(semantic_preds_cpu, idx.cpu(), start_len.cpu(), self.cluster_npoint_thre)
+            # proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
             # proposals_idx: (sumNPoint, 2), int, dim 0 for cluster_id, dim 1 for corresponding point idxs in N
             # proposals_offset: (nProposal + 1), int
 
             proposals_idx_shift[:, 0] += (proposals_offset.size(0) - 1)
             proposals_offset_shift += proposals_offset[-1]
-            proposals_idx = torch.cat((proposals_idx, proposals_idx_shift), dim=0)
-            proposals_offset = torch.cat((proposals_offset, proposals_offset_shift[1:]))
+            # proposals_idx = torch.cat((proposals_idx, proposals_idx_shift), dim=0)
+            # proposals_offset = torch.cat((proposals_offset, proposals_offset_shift[1:]))
+            proposals_idx = proposals_idx_shift
+            proposals_offset = proposals_offset_shift
 
             #### proposals voxelization again
             input_feats, inp_map = self.clusters_voxelization(proposals_idx, proposals_offset, output_feats, coords, self.score_fullscale, self.score_scale, self.mode)
@@ -329,7 +331,7 @@ def model_fn_decorator(test=False):
     semantic_criterion = nn.CrossEntropyLoss(ignore_index=cfg.ignore_label).cuda()
     score_criterion = nn.BCELoss(reduction='none').cuda()
 
-    def test_model_fn(batch, model, epoch):
+    def test_model_fn(batch, model, iter_num):
         coords = batch['locs'].cuda()              # (N, 1 + 3), long, cuda, dimension 0 for batch_idx
         voxel_coords = batch['voxel_locs'].cuda()  # (M, 1 + 3), long, cuda
         p2v_map = batch['p2v_map'].cuda()          # (N), int, cuda
@@ -348,10 +350,10 @@ def model_fn_decorator(test=False):
 
         input_ = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, cfg.batch_size)
 
-        ret = model(input_, p2v_map, coords_float, coords[:, 0].int(), batch_offsets, epoch)
+        ret = model(input_, p2v_map, coords_float, coords[:, 0].int(), batch_offsets, iter_num)
         semantic_scores = ret['semantic_scores']  # (N, nClass) float32, cuda
         pt_offsets = ret['pt_offsets']            # (N, 3), float32, cuda
-        if (epoch > cfg.prepare_epochs):
+        if (iter_num > cfg.prepare_iters):
             scores, proposals_idx, proposals_offset = ret['proposal_scores']
 
         ##### preds
@@ -359,14 +361,14 @@ def model_fn_decorator(test=False):
             preds = {}
             preds['semantic'] = semantic_scores
             preds['pt_offsets'] = pt_offsets
-            if (epoch > cfg.prepare_epochs):
+            if (iter_num > cfg.prepare_iters):
                 preds['score'] = scores
                 preds['proposals'] = (proposals_idx, proposals_offset)
 
         return preds
 
 
-    def model_fn(batch, model, epoch):
+    def model_fn(batch, model, iter_num):
         ##### prepare input and forward
         # batch {'locs': locs, 'voxel_locs': voxel_locs, 'p2v_map': p2v_map, 'v2p_map': v2p_map,
         # 'locs_float': locs_float, 'feats': feats, 'labels': labels, 'instance_labels': instance_labels,
@@ -395,10 +397,10 @@ def model_fn_decorator(test=False):
 
         input_ = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, cfg.batch_size)
 
-        ret = model(input_, p2v_map, coords_float, coords[:, 0].int(), batch_offsets, epoch)
+        ret = model(input_, p2v_map, coords_float, coords[:, 0].int(), batch_offsets, iter_num)
         semantic_scores = ret['semantic_scores'] # (N, nClass) float32, cuda
         pt_offsets = ret['pt_offsets']           # (N, 3), float32, cuda
-        if(epoch > cfg.prepare_epochs):
+        if(iter_num > cfg.prepare_iters):
             scores, proposals_idx, proposals_offset = ret['proposal_scores']
             # scores: (nProposal, 1) float, cuda
             # proposals_idx: (sumNPoint, 2), int, cpu, dim 0 for cluster_id, dim 1 for corresponding point idxs in N
@@ -407,17 +409,17 @@ def model_fn_decorator(test=False):
         loss_inp = {}
         loss_inp['semantic_scores'] = (semantic_scores, labels)
         loss_inp['pt_offsets'] = (pt_offsets, coords_float, instance_info, instance_labels)
-        if(epoch > cfg.prepare_epochs):
+        if(iter_num > cfg.prepare_iters):
             loss_inp['proposal_scores'] = (scores, proposals_idx, proposals_offset, instance_pointnum)
 
-        loss, loss_out, infos = loss_fn(loss_inp, epoch)
+        loss, loss_out, infos = loss_fn(loss_inp, iter_num)
 
         ##### accuracy / visual_dict / meter_dict
         with torch.no_grad():
             preds = {}
             preds['semantic'] = semantic_scores
             preds['pt_offsets'] = pt_offsets
-            if(epoch > cfg.prepare_epochs):
+            if(iter_num > cfg.prepare_iters):
                 preds['score'] = scores
                 preds['proposals'] = (proposals_idx, proposals_offset)
 
@@ -434,7 +436,7 @@ def model_fn_decorator(test=False):
         return loss, preds, visual_dict, meter_dict
 
 
-    def loss_fn(loss_inp, epoch):
+    def loss_fn(loss_inp, iter_num):
 
         loss_out = {}
         infos = {}
@@ -470,7 +472,7 @@ def model_fn_decorator(test=False):
         loss_out['offset_norm_loss'] = (offset_norm_loss, valid.sum())
         loss_out['offset_dir_loss'] = (offset_dir_loss, valid.sum())
 
-        if (epoch > cfg.prepare_epochs):
+        if (iter_num > cfg.prepare_iters):
             '''score loss'''
             scores, proposals_idx, proposals_offset, instance_pointnum = loss_inp['proposal_scores']
             # scores: (nProposal, 1), float32
@@ -489,7 +491,7 @@ def model_fn_decorator(test=False):
 
         '''total loss'''
         loss = cfg.loss_weight[0] * semantic_loss + cfg.loss_weight[1] * offset_norm_loss + cfg.loss_weight[2] * offset_dir_loss
-        if(epoch > cfg.prepare_epochs):
+        if(iter_num > cfg.prepare_iters):
             loss += (cfg.loss_weight[3] * score_loss)
 
         return loss, loss_out, infos
