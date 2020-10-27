@@ -313,6 +313,7 @@ class Dataset:
             ### offset and crop
             xyz -= xyz.min(0)
             xyz, valid_idxs = self.crop(xyz)
+            # NOTE: for TOD, this doesn't actually crop since I set cfg.max_npoint > #pixels
 
             xyz = xyz[valid_idxs]
             xyz_aug = xyz_aug[valid_idxs]

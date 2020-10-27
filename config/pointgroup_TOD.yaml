@@ -12,7 +12,7 @@ DATA:
   ignore_label: -100
 
   input_channel: 3
-  scale: 250   # voxel_size = 1 / scale, scale 50(2cm)
+  scale: 250   # voxel_size = 1 / scale, scale 50 = 2cm, scale 250 = 4mm
   batch_size: 4
   far_plane: 3.  # Anything above this depth is not considered
   full_scale: [512, 2048]  # Original values were [128, 512]. Multiplied by 4
@@ -29,7 +29,7 @@ STRUCTURE:
 
 TRAIN:
   max_epochs: 10
-  max_iters: 150000
+  max_iters: 300000
   train_workers: 16 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.001
@@ -66,7 +66,7 @@ GROUP:
   cluster_shift_meanActive: 300
   cluster_npoint_thre: 50
 
-  prepare_iters: 50000
+  prepare_iters: 100000  # 1/3 of the training
 
 TEST:
   split: val

@@ -301,24 +301,25 @@ class PointGroup(nn.Module):
             # proposals_idx: (sumNPoint, 2), int, dim 0 for cluster_id, dim 1 for corresponding point idxs in N
             # proposals_offset: (nProposal + 1), int
 
-            proposals_idx_shift[:, 0] += (proposals_offset.size(0) - 1)
-            proposals_offset_shift += proposals_offset[-1]
+            # proposals_idx_shift[:, 0] += (proposals_offset.size(0) - 1)
+            # proposals_offset_shift += proposals_offset[-1]
             # proposals_idx = torch.cat((proposals_idx, proposals_idx_shift), dim=0)
             # proposals_offset = torch.cat((proposals_offset, proposals_offset_shift[1:]))
             proposals_idx = proposals_idx_shift
             proposals_offset = proposals_offset_shift
 
             #### proposals voxelization again
-            input_feats, inp_map = self.clusters_voxelization(proposals_idx, proposals_offset, output_feats, coords, self.score_fullscale, self.score_scale, self.mode)
+            if proposals_offset.shape[0] - 1 > 0:  # Predicted at least 1 cluster
+                input_feats, inp_map = self.clusters_voxelization(proposals_idx, proposals_offset, output_feats, coords, self.score_fullscale, self.score_scale, self.mode)
 
-            #### score
-            score = self.score_unet(input_feats)
-            score = self.score_outputlayer(score)
-            score_feats = score.features[inp_map.long()] # (sumNPoint, C)
-            score_feats = pointgroup_ops.roipool(score_feats, proposals_offset.cuda())  # (nProposal, C)
-            scores = self.score_linear(score_feats)  # (nProposal, 1)
+                #### score
+                score = self.score_unet(input_feats)
+                score = self.score_outputlayer(score)
+                score_feats = score.features[inp_map.long()] # (sumNPoint, C)
+                score_feats = pointgroup_ops.roipool(score_feats, proposals_offset.cuda())  # (nProposal, C)
+                scores = self.score_linear(score_feats)  # (nProposal, 1)
 
-            ret['proposal_scores'] = (scores, proposals_idx, proposals_offset)
+                ret['proposal_scores'] = (scores, proposals_idx, proposals_offset)
 
         return ret
 
@@ -400,7 +401,7 @@ def model_fn_decorator(test=False):
         ret = model(input_, p2v_map, coords_float, coords[:, 0].int(), batch_offsets, iter_num)
         semantic_scores = ret['semantic_scores'] # (N, nClass) float32, cuda
         pt_offsets = ret['pt_offsets']           # (N, 3), float32, cuda
-        if(iter_num > cfg.prepare_iters):
+        if(iter_num > cfg.prepare_iters) and 'proposal_scores' in ret:
             scores, proposals_idx, proposals_offset = ret['proposal_scores']
             # scores: (nProposal, 1) float, cuda
             # proposals_idx: (sumNPoint, 2), int, cpu, dim 0 for cluster_id, dim 1 for corresponding point idxs in N
@@ -409,7 +410,7 @@ def model_fn_decorator(test=False):
         loss_inp = {}
         loss_inp['semantic_scores'] = (semantic_scores, labels)
         loss_inp['pt_offsets'] = (pt_offsets, coords_float, instance_info, instance_labels)
-        if(iter_num > cfg.prepare_iters):
+        if(iter_num > cfg.prepare_iters) and 'proposal_scores' in ret:
             loss_inp['proposal_scores'] = (scores, proposals_idx, proposals_offset, instance_pointnum)
 
         loss, loss_out, infos = loss_fn(loss_inp, iter_num)
@@ -419,17 +420,17 @@ def model_fn_decorator(test=False):
             preds = {}
             preds['semantic'] = semantic_scores
             preds['pt_offsets'] = pt_offsets
-            if(iter_num > cfg.prepare_iters):
+            if(iter_num > cfg.prepare_iters) and 'proposal_scores' in ret:
                 preds['score'] = scores
                 preds['proposals'] = (proposals_idx, proposals_offset)
 
             visual_dict = {}
-            visual_dict['loss'] = loss
+            visual_dict['total_loss'] = loss
             for k, v in loss_out.items():
                 visual_dict[k] = v[0]
 
             meter_dict = {}
-            meter_dict['loss'] = (loss.item(), coords.shape[0])
+            meter_dict['total_loss'] = (loss.item(), coords.shape[0])
             for k, v in loss_out.items():
                 meter_dict[k] = (float(v[0]), v[1])
 
@@ -472,7 +473,7 @@ def model_fn_decorator(test=False):
         loss_out['offset_norm_loss'] = (offset_norm_loss, valid.sum())
         loss_out['offset_dir_loss'] = (offset_dir_loss, valid.sum())
 
-        if (iter_num > cfg.prepare_iters):
+        if (iter_num > cfg.prepare_iters) and 'proposal_scores' in loss_inp:
             '''score loss'''
             scores, proposals_idx, proposals_offset, instance_pointnum = loss_inp['proposal_scores']
             # scores: (nProposal, 1), float32
@@ -480,8 +481,11 @@ def model_fn_decorator(test=False):
             # proposals_offset: (nProposal + 1), int, cpu
             # instance_pointnum: (total_nInst), int
 
-            ious = pointgroup_ops.get_iou(proposals_idx[:, 1].cuda(), proposals_offset.cuda(), instance_labels, instance_pointnum) # (nProposal, nInstance), float
-            gt_ious, gt_instance_idxs = ious.max(1)  # (nProposal) float, long
+            if instance_pointnum.shape[0] == 0:  # The model predicted instances, but there are none in GT
+                gt_ious = torch.zeros_like(scores).view(-1)  # (nProposal) float
+            else:
+                ious = pointgroup_ops.get_iou(proposals_idx[:, 1].cuda(), proposals_offset.cuda(), instance_labels, instance_pointnum) # (nProposal, nInstance), float
+                gt_ious, gt_instance_idxs = ious.max(1)  # (nProposal) float, long
             gt_scores = get_segmented_scores(gt_ious, cfg.fg_thresh, cfg.bg_thresh)
 
             score_loss = score_criterion(torch.sigmoid(scores.view(-1)), gt_scores)
@@ -491,7 +495,7 @@ def model_fn_decorator(test=False):
 
         '''total loss'''
         loss = cfg.loss_weight[0] * semantic_loss + cfg.loss_weight[1] * offset_norm_loss + cfg.loss_weight[2] * offset_dir_loss
-        if(iter_num > cfg.prepare_iters):
+        if(iter_num > cfg.prepare_iters) and 'proposal_scores' in loss_inp:
             loss += (cfg.loss_weight[3] * score_loss)
 
         return loss, loss_out, infos
