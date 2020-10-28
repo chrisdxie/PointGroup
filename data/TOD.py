@@ -71,6 +71,8 @@ class Dataset:
         self.batch_size = cfg.batch_size
         self.train_workers = cfg.train_workers
 
+        self.subsample_factor = cfg.subsample_factor
+
         self.full_scale = cfg.full_scale
         self.scale = cfg.scale
         self.mode = cfg.mode
@@ -263,6 +265,14 @@ class Dataset:
         # Labels
         instance_labels = imread_indexed(segmentation_filename)
         segmentation_labels, instance_labels = self.process_instance_label(instance_labels)
+
+        # Subsample
+        rgb_img = rgb_img[::self.subsample_factor, ::self.subsample_factor]
+        depth_img = depth_img[::self.subsample_factor, ::self.subsample_factor]
+        xyz_img = xyz_img[::self.subsample_factor, ::self.subsample_factor]
+        xyz_img_augmented = xyz_img_augmented[::self.subsample_factor, ::self.subsample_factor]
+        segmentation_labels = segmentation_labels[::self.subsample_factor, ::self.subsample_factor]
+        instance_labels = instance_labels[::self.subsample_factor, ::self.subsample_factor]
 
         # Reshape
         rgb = rgb_img.reshape(-1,3)

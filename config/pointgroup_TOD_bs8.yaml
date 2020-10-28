@@ -12,13 +12,13 @@ DATA:
   ignore_label: -100
 
   input_channel: 3
-  scale: 250   # voxel_size = 1 / scale, scale 50 = 2cm, scale 250 = 4mm
-  batch_size: 4
+  scale: 200   # voxel_size = 1 / scale, scale 50 = 2cm, scale 200 = 5mm
+  batch_size: 8
   full_scale: [512, 2048]  # Original values were [128, 512]. Multiplied by 4
   max_npoint: 350000  # Each image has a point cloud of 307200 = 480*640
   mode: 4 # 4=mean
 
-  subsample_factor: 1
+  subsample_factor: 2
   far_plane: 3.  # Anything above this depth is not considered
   near_plane: 0.25  # Anything closer tan this depth is not considered (TOD data subtlety issue... this will blow up v2p_map)
 
@@ -32,7 +32,7 @@ STRUCTURE:
 
 TRAIN:
   max_epochs: 10
-  max_iters: 300000
+  max_iters: 150000
   train_workers: 16 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.001
@@ -48,8 +48,8 @@ TRAIN:
   fg_thresh: 0.75
   bg_thresh: 0.25
 
-  score_scale: 250 # the minimal voxel size is 4mm. This is 5x smaller than PointGroup (on ScanNet), which uses 2cm
-  score_fullscale: 70 # Original value (ScanNet) was 14, 5x means 70.
+  score_scale: 200 # the minimal voxel size is 4mm. This is 5x smaller than PointGroup (on ScanNet), which uses 2cm
+  score_fullscale: 56 # Original value (ScanNet) was 14, 4x means 56.
   score_mode: 4 # mean
 
   pretrain_path:
@@ -64,12 +64,12 @@ TRAIN:
 
 GROUP:
   ### point grouping
-  cluster_radius: 0.006  # Original value was 0.03. Divided by 5
+  cluster_radius: 0.0075  # Original value was 0.03. Divided by 4
   cluster_meanActive: 50
   cluster_shift_meanActive: 300
   cluster_npoint_thre: 50
 
-  prepare_iters: 100000  # 1/3 of the training
+  prepare_iters: 50000  # 1/3 of the training
 
 TEST:
   split: val
