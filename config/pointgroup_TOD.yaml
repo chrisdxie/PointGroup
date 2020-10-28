@@ -14,10 +14,12 @@ DATA:
   input_channel: 3
   scale: 250   # voxel_size = 1 / scale, scale 50 = 2cm, scale 250 = 4mm
   batch_size: 4
-  far_plane: 3.  # Anything above this depth is not considered
   full_scale: [512, 2048]  # Original values were [128, 512]. Multiplied by 4
   max_npoint: 350000  # Each image has a point cloud of 307200 = 480*640
   mode: 4 # 4=mean
+
+  far_plane: 3.  # Anything above this depth is not considered
+  near_plane: 0.25  # Anything closer tan this depth is not considered (TOD data subtlety issue... this will blow up v2p_map)
 
 STRUCTURE:
   model_name: pointgroup
