@@ -2,11 +2,11 @@ GENERAL:
   task: train  # train, test
   manual_seed: 123
   model_dir: model/pointgroup/pointgroup.py
-  dataset_dir: data/TOD.py
+  dataset_dir: data/OSD.py
 
 DATA:
-  data_root: /raid/chrisxie/tabletop_dataset_v5/
-  dataset: TOD
+  data_root: /raid/chrisxie/OSD/
+  dataset: OSD
 
   classes: 3
   ignore_label: -100
@@ -30,38 +30,9 @@ STRUCTURE:
 
   use_coords: True
 
-TRAIN:
-  max_epochs: 10
-  max_iters: 300000
-  train_workers: 16 # data loader workers
-  optim: Adam # Adam or SGD
-  lr: 0.001
-  step_epoch: 50 # not used
-  multiplier: 0.5
-  momentum: 0.9
-  weight_decay: 0.0001
-  save_freq: 1  # also eval_freq
-  loss_weight: [1.0, 1.0, 1.0, 1.0] # semantic_loss, offset_norm_loss, offset_dir_loss, score_loss
-
-  i_log: 50  # Log to tensorboard every X iterations
-
-  fg_thresh: 0.75
-  bg_thresh: 0.25
-
   score_scale: 250 # the minimal voxel size is 4mm. This is 5x smaller than PointGroup (on ScanNet), which uses 2cm
   score_fullscale: 70 # Original value (ScanNet) was 14, 5x means 70.
   score_mode: 4 # mean
-
-  pretrain_path: /home/chrisxie/local_installations/PointGroup/exp/TOD/pointgroup/pointgroup_TOD/001/pointgroup_TOD-000000005.pth
-  pretrain_module: ['input_conv', 'unet', 'output_layer', 'linear', 'offset', 'offset_linear',
-                    'score_unet', 'score_outputlayer', 'score_linear']
-  fix_module: []
-
-  gamma_shape: 1000.
-  gamma_scale: 0.001
-
-  gaussian_scale_range : [0., 0.003]  # up to 3mm standard dev
-  gp_rescale_factor_range : [12, 20]  # [low, high (exclusive)]
 
 GROUP:
   ### point grouping
@@ -73,6 +44,13 @@ GROUP:
   prepare_iters: 100000  # 1/3 of the training
 
 TEST:
+
+  pretrain_path: /home/chrisxie/local_installations/PointGroup/exp/TOD/pointgroup/pointgroup_TOD/001/pointgroup_TOD-000000005.pth
+  pretrain_module: ['input_conv', 'unet', 'output_layer', 'linear', 'offset', 'offset_linear',
+                    'score_unet', 'score_outputlayer', 'score_linear']
+  fix_module: []
+
+
   split: val
   test_epoch: 5
   test_workers: 16
