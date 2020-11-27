@@ -61,6 +61,6 @@ def get_parser_notebook(cfg_file=None, pretrain_path=None):
         latest_exp_dir_num = int(latest_exp_dir.split('/')[-1][-3:])
     else:
         latest_exp_dir_num = 0
-    exp_path = os.path.join(base_exp_path, f'{latest_exp_dir_num+1:03d}')
+    exp_path = os.path.join(base_exp_path, f'{latest_exp_dir_num:03d}')
 
     setattr(cfg, 'exp_path', exp_path)

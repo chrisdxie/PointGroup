@@ -37,7 +37,7 @@ def init():
     torch.cuda.manual_seed_all(cfg.test_seed)
 
 
-def test(model, model_fn, data_name, epoch):
+def test(model, model_fn, data_name, iter):
     logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
 
     if cfg.dataset == 'scannetv2':
@@ -60,7 +60,7 @@ def test(model, model_fn, data_name, epoch):
             test_scene_name = dataset.test_file_names[int(batch['id'][0])].split('/')[-1][:12]
 
             start1 = time.time()
-            preds = model_fn(batch, model, epoch)
+            preds = model_fn(batch, model, iter)
             end1 = time.time() - start1
 
             ##### get predictions (#1 semantic_pred, pt_offsets; #2 scores, proposals_pred)
@@ -69,7 +69,7 @@ def test(model, model_fn, data_name, epoch):
 
             pt_offsets = preds['pt_offsets']    # (N, 3), float32, cuda
 
-            if (epoch > cfg.prepare_epochs):
+            if (iter_num > cfg.prepare_iters):
                 scores = preds['score']   # (nProposal, 1) float, cuda
                 scores_pred = torch.sigmoid(scores.view(-1))
 
@@ -138,7 +138,7 @@ def test(model, model_fn, data_name, epoch):
                 np.save(os.path.join(result_dir, 'coords_offsets', test_scene_name + '.npy'), coords_offsets)
 
 
-            if(epoch > cfg.prepare_epochs and cfg.save_instance):
+            if(iter_num > cfg.prepare_iters and cfg.save_instance):
                 f = open(os.path.join(result_dir, test_scene_name + '.txt'), 'w')
                 for proposal_id in range(nclusters):
                     clusters_i = clusters[proposal_id].cpu().numpy()  # (N)
