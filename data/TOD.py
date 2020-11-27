@@ -70,6 +70,7 @@ class Dataset:
 
         self.batch_size = cfg.batch_size
         self.train_workers = cfg.train_workers
+        self.test_workers = cfg.test_workers
 
         self.subsample_factor = cfg.subsample_factor
 
@@ -93,7 +94,7 @@ class Dataset:
         self.gp_rescale_factor_range = cfg.gp_rescale_factor_range
 
     def trainLoader(self):
-        with open(os.path.join(self.data_root, 'label_files.txt'), 'r') as f:
+        with open(os.path.join(self.data_root, 'train_label_files.txt'), 'r') as f:
             self.label_filenames = f.readlines()
         # Only look at examples with table in it.
         self.label_filenames = [x for x in self.label_filenames if 'segmentation_00000.png' not in x]
@@ -110,6 +111,22 @@ class Dataset:
                                             pin_memory=True)
 
 
+    def testLoader(self):
+        with open(os.path.join(self.data_root, 'test_label_files.txt'), 'r') as f:
+            self.label_filenames = f.readlines()
+
+        logger.info('Training samples: {}'.format(len(self.label_filenames)))
+
+        self.test_data_loader = DataLoader(list(range(len(self.label_filenames))),
+                                           batch_size=self.batch_size,
+                                           collate_fn=self.test_collate_fn,
+                                           num_workers=self.test_workers,
+                                           shuffle=False,
+                                           sampler=None, 
+                                           drop_last=False,
+                                           pin_memory=True)
+
+
     def getInstanceInfo(self, xyz, instance_label):
         '''
         :param xyz: (n, 3)
@@ -118,7 +135,7 @@ class Dataset:
         '''
         instance_info = np.ones((xyz.shape[0], 9), dtype=np.float32) * -100.0   # (n, 9), float, (cx, cy, cz, minx, miny, minz, maxx, maxy, maxz)
         instance_pointnum = []   # (nInst), int
-        instance_num = int(instance_label.max()) + 1
+        instance_num = max(int(instance_label.max()) + 1, 0)
         for i_ in range(instance_num):
             inst_idx_i = np.where(instance_label == i_)
 
@@ -291,7 +308,7 @@ class Dataset:
         segmentation_labels = segmentation_labels[valid_mask]
         instance_labels = instance_labels[valid_mask]
 
-        return xyz, xyz_augmented, rgb, segmentation_labels, instance_labels
+        return xyz, xyz_augmented, rgb, segmentation_labels, instance_labels, valid_mask
 
 
     def train_collate_fn(self, id):
@@ -303,6 +320,7 @@ class Dataset:
         feats = []
         labels = []
         instance_labels = []
+        valid_masks = []
 
         instance_infos = []  # (N, 9)
         instance_pointnum = []  # (total_nInst), int
@@ -316,7 +334,7 @@ class Dataset:
             label_filename = self.label_filenames[idx].strip()
             rgb_filename = label_filename.replace('segmentation', 'rgb').replace('png', 'jpeg')
             depth_filename = label_filename.replace('segmentation', 'depth')
-            xyz_origin, xyz_aug, rgb, label, instance_label = \
+            xyz_origin, xyz_aug, rgb, label, instance_label, valid_mask = \
                 self.load_data(rgb_filename, depth_filename,label_filename)
 
             ### scale
@@ -333,13 +351,15 @@ class Dataset:
             rgb = rgb[valid_idxs]
             label = label[valid_idxs]
             instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
+            if not np.all(valid_idxs):
+                raise Exception("valid_idxs is not all True...")
 
             ### get instance information
             inst_num, inst_infos = self.getInstanceInfo(xyz_origin, instance_label.astype(np.int32))
             inst_info = inst_infos["instance_info"]  # (n, 9), (cx, cy, cz, minx, miny, minz, maxx, maxy, maxz)
             inst_pointnum = inst_infos["instance_pointnum"]   # (nInst), list
 
-            instance_label[np.where(instance_label != cfg.ignore_label)] += total_inst_num
+            instance_label[instance_label != cfg.ignore_label] += total_inst_num
             total_inst_num += inst_num
 
             ### merge the scene to the batch
@@ -350,6 +370,7 @@ class Dataset:
             feats.append(torch.from_numpy(rgb))  # Can set this to be torch.zeros((N,0), dtype=torch.float) if I don't want RGB
             labels.append(torch.from_numpy(label))
             instance_labels.append(torch.from_numpy(instance_label))
+            valid_masks.append(torch.from_numpy(valid_mask))
 
             instance_infos.append(torch.from_numpy(inst_info))
             instance_pointnum.extend(inst_pointnum)
@@ -362,6 +383,7 @@ class Dataset:
         feats = torch.cat(feats, 0)                              # float (N, C)
         labels = torch.cat(labels, 0).long()                     # long (N)
         instance_labels = torch.cat(instance_labels, 0).long()   # long (N)
+        valid_mask = torch.cat(valid_masks, 0).bool()             # bool (N)
 
         instance_infos = torch.cat(instance_infos, 0).to(torch.float32)       # float (N, 9) (meanxyz, minxyz, maxxyz)
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
@@ -373,8 +395,71 @@ class Dataset:
 
         return {'locs': locs, 'voxel_locs': voxel_locs, 'p2v_map': p2v_map, 'v2p_map': v2p_map,
                 'locs_float': locs_float, 'feats': feats, 'labels': labels, 'instance_labels': instance_labels,
-                'instance_info': instance_infos, 'instance_pointnum': instance_pointnum,
+                'valid_mask': valid_mask, 'instance_info': instance_infos, 'instance_pointnum': instance_pointnum,
                 'id': id, 'offsets': batch_offsets, 'spatial_shape': spatial_shape}
 
 
+    def test_collate_fn(self, id):
+        """
+        :param id: a list of integers
+        """
+        locs = []
+        locs_float = []
+        feats = []
+        valid_masks = []
+        label_abs_paths = []
+        batch_offsets = [0]
+
+        for i, idx in enumerate(id):
+
+            # Load data
+            label_filename = self.label_filenames[idx].strip()
+            rgb_filename = label_filename.replace('segmentation', 'rgb').replace('png', 'jpeg')
+            depth_filename = label_filename.replace('segmentation', 'depth')
+            xyz, _, rgb, _, _, valid_mask = \
+                self.load_data(rgb_filename, depth_filename, label_filename)
+
+            label_abs_path = '/'.join(label_filename.split('/')[-2:]) # Used for evaluation
+
+            ### scale
+            xyz_scaled = xyz * self.scale
+
+            ### offset and crop
+            xyz_scaled -= xyz_scaled.min(0)
+            xyz_scaled, valid_idxs = self.crop(xyz_scaled)
+            # NOTE: for TOD, this doesn't actually crop since I set cfg.max_npoint > #pixels
+
+            xyz_scaled = xyz_scaled[valid_idxs]
+            xyz = xyz[valid_idxs]
+            rgb = rgb[valid_idxs]
+            if not np.all(valid_idxs):
+                raise Exception("valid_idxs is not all True...")
+                raise Exception("valid_idxs is not all True...")
+
+            ### merge the scene to the batch
+            batch_offsets.append(batch_offsets[-1] + xyz_scaled.shape[0])
+
+            locs.append(torch.cat([torch.LongTensor(xyz_scaled.shape[0], 1).fill_(i), torch.from_numpy(xyz_scaled).long()], 1))  # Used for voxelization
+            locs_float.append(torch.from_numpy(xyz))  # XYZ coords used in the network
+            feats.append(torch.from_numpy(rgb))  # Can set this to be torch.zeros((N,0), dtype=torch.float) if I don't want RGB
+            valid_masks.append(torch.from_numpy(valid_mask))
+            label_abs_paths.append(label_abs_path)
+
+        ### merge all the scenes in the batchd
+        batch_offsets = torch.tensor(batch_offsets, dtype=torch.int)  # int (B+1)
+
+        locs = torch.cat(locs, 0)                                # long (N, 1 + 3), the batch item idx is put in locs[:, 0]
+        locs_float = torch.cat(locs_float, 0).to(torch.float32)  # float (N, 3)
+        feats = torch.cat(feats, 0)                              # float (N, C)
+        valid_mask = torch.cat(valid_masks, 0).bool()             # bool (N)
+
+        spatial_shape = np.clip((locs.max(0)[0][1:] + 1).numpy(), self.full_scale[0], None)     # long (3)
+
+        ### voxelize
+        voxel_locs, p2v_map, v2p_map = pointgroup_ops.voxelization_idx(locs, self.batch_size, self.mode)
+
+        return {'locs': locs, 'voxel_locs': voxel_locs, 'p2v_map': p2v_map, 'v2p_map': v2p_map,
+                'locs_float': locs_float, 'feats': feats, 'valid_mask': valid_mask,
+                'id': id, 'offsets': batch_offsets, 'spatial_shape': spatial_shape,
+                'label_abs_path' : label_abs_paths}
 
